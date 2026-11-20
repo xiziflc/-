@@ -1,0 +1,8 @@
+{
+  "name": "Remix VoltPulse 充能监测",
+  "description": "赛博朋克风格安卓免 Root 充电监测工具，支持实时功率/电流/电压/温度遥测、双电芯校准、插电自动拉起与充电曲线历史记录。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

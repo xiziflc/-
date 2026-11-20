@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">VoltPulse 充能监测</string>
+    <string name="channel_monitor_name">充电遥测哨兵</string>
+    <string name="channel_monitor_desc">充电期间常驻通知，实时显示充电功率、电流与温度</string>
+    <string name="channel_alert_name">电池安全告警</string>
+    <string name="channel_alert_desc">电池高温或达到目标电量时触发告警通知</string>
+    <string name="nav_monitor">实时遥测</string>
+    <string name="nav_history">充能日志</string>
+    <string name="nav_sentinel">保活哨兵</string>
+    <string name="nav_calibration">校准告警</string>
+    <string name="action_stop_monitor">停止监控</string>
+</resources>
