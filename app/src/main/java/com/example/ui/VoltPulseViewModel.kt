@@ -19,7 +19,10 @@ import com.example.monitor.ChargingMonitorService
 import com.example.monitor.ChargingWorkScheduler
 import com.example.monitor.KeepAliveHelper
 import com.example.monitor.KeepAliveStatus
+import com.example.monitor.ShizukuHelper
+import com.example.monitor.ShizukuStatus
 import com.example.ui.components.CurveDataPoint
+import rikka.shizuku.Shizuku
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -128,6 +131,21 @@ class VoltPulseViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _statusRefreshTick = MutableStateFlow(0)
 
+    private val _shizukuStatus = MutableStateFlow(ShizukuStatus())
+    val shizukuStatus: StateFlow<ShizukuStatus> = _shizukuStatus.asStateFlow()
+
+    private val shizukuBinderListener = Shizuku.OnBinderReceivedListener {
+        refreshShizukuStatus()
+    }
+    private val shizukuBinderDeadListener = Shizuku.OnBinderDeadListener {
+        refreshShizukuStatus()
+    }
+    private val shizukuPermListener = Shizuku.OnRequestPermissionResultListener { requestCode, _ ->
+        if (requestCode == ShizukuHelper.REQUEST_CODE_SHIZUKU) {
+            refreshShizukuStatus()
+        }
+    }
+
     val keepAliveStatus: StateFlow<KeepAliveStatus> = combine(
         isSentinelArmed,
         isServiceRunning,
@@ -154,6 +172,12 @@ class VoltPulseViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         app.registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        runCatching {
+            Shizuku.addBinderReceivedListenerSticky(shizukuBinderListener)
+            Shizuku.addBinderDeadListener(shizukuBinderDeadListener)
+            Shizuku.addRequestPermissionResultListener(shizukuPermListener)
+        }
+        refreshShizukuStatus()
         rescanSysfs()
 
         viewModelScope.launch {
@@ -209,6 +233,24 @@ class VoltPulseViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshKeepAliveStatus() {
         _statusRefreshTick.value += 1
+        refreshShizukuStatus()
+    }
+
+    fun refreshShizukuStatus(message: String = _shizukuStatus.value.lastActionMessage) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _shizukuStatus.value = ShizukuHelper.checkStatus(app, message)
+        }
+    }
+
+    fun requestShizukuPermission() {
+        ShizukuHelper.requestPermission()
+    }
+
+    fun applyShizukuHardening() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _shizukuStatus.value = ShizukuHelper.applyKeepAliveHardening(app)
+            _statusRefreshTick.value += 1
+        }
     }
 
     fun toggleMonitorService() {
@@ -301,6 +343,11 @@ class VoltPulseViewModel(application: Application) : AndroidViewModel(applicatio
 
     override fun onCleared() {
         runCatching { app.unregisterReceiver(batteryReceiver) }
+        runCatching {
+            Shizuku.removeBinderReceivedListener(shizukuBinderListener)
+            Shizuku.removeBinderDeadListener(shizukuBinderDeadListener)
+            Shizuku.removeRequestPermissionResultListener(shizukuPermListener)
+        }
         super.onCleared()
     }
 }

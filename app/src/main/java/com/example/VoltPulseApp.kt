@@ -3,6 +3,7 @@ package com.example
 import android.app.Application
 import com.example.data.BatteryReader
 import com.example.data.ChargingRepository
+import com.example.data.DiagnosticLogger
 import com.example.data.SettingsRepository
 import com.example.data.db.VoltPulseDatabase
 import com.example.monitor.ChargingMonitorService
@@ -23,6 +24,8 @@ class VoltPulseApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        DiagnosticLogger.init(this)
+        DiagnosticLogger.log("APP", "VoltPulseApp onCreate")
         ChargingMonitorService.ensureNotificationChannels(this)
 
         appScope.launch {

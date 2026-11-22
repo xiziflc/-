@@ -3,6 +3,8 @@ package com.example
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.view.Display
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -56,7 +58,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.DiagnosticExporter
+import com.example.data.DiagnosticLogger
 import com.example.monitor.KeepAliveHelper
+import com.example.monitor.ShizukuHelper
 import com.example.ui.VoltPulseViewModel
 import com.example.ui.components.CyberGridBackdrop
 import com.example.ui.screens.CalibrationScreen
@@ -79,15 +84,70 @@ private enum class VoltPulseTab(
 }
 
 class MainActivity : ComponentActivity() {
+    private var lastLoggedRefreshRate = -1
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
+        applyHighestRefreshRate()
         setContent {
             VoltPulseTheme {
-                VoltPulseRoot()
+                VoltPulseRoot(displayInfoProvider = { getDisplayInfoSummary() })
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyHighestRefreshRate()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            applyHighestRefreshRate()
+        }
+    }
+
+    private fun currentDisplay(): Display? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        display ?: @Suppress("DEPRECATION") windowManager.defaultDisplay
+    } else {
+        @Suppress("DEPRECATION") windowManager.defaultDisplay
+    }
+
+    private fun getDisplayInfoSummary(): String = DiagnosticExporter.describeDisplay(currentDisplay())
+
+    private fun applyHighestRefreshRate() {
+        val targetDisplay = currentDisplay() ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val activeMode = targetDisplay.mode
+            val bestMode = targetDisplay.supportedModes
+                .filter {
+                    it.physicalWidth == activeMode.physicalWidth &&
+                        it.physicalHeight == activeMode.physicalHeight
+                }
+                .maxByOrNull { it.refreshRate }
+                ?: activeMode
+
+            val attrs = window.attributes
+            if (attrs.preferredDisplayModeId != bestMode.modeId ||
+                attrs.preferredRefreshRate != bestMode.refreshRate
+            ) {
+                attrs.preferredDisplayModeId = bestMode.modeId
+                attrs.preferredRefreshRate = bestMode.refreshRate
+                window.attributes = attrs
+            }
+
+            val rateInt = bestMode.refreshRate.toInt()
+            if (lastLoggedRefreshRate != rateInt) {
+                lastLoggedRefreshRate = rateInt
+                DiagnosticLogger.log(
+                    "DISPLAY",
+                    "Applied preferredDisplayModeId=${bestMode.modeId} (${rateInt}Hz), current=${activeMode.refreshRate.toInt()}Hz"
+                )
             }
         }
     }
@@ -95,6 +155,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun VoltPulseRoot(
+    displayInfoProvider: () -> String,
     viewModel: VoltPulseViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -113,6 +174,7 @@ private fun VoltPulseRoot(
     val isServiceRunning by viewModel.isServiceRunning.collectAsStateWithLifecycle()
     val isSentinelArmed by viewModel.isSentinelArmed.collectAsStateWithLifecycle()
     val keepAliveStatus by viewModel.keepAliveStatus.collectAsStateWithLifecycle()
+    val shizukuStatus by viewModel.shizukuStatus.collectAsStateWithLifecycle()
     val sysfsNodes by viewModel.sysfsNodes.collectAsStateWithLifecycle()
 
     DisposableEffect(lifecycleOwner) {
@@ -181,6 +243,36 @@ private fun VoltPulseRoot(
                         selectedSamples = selectedSamples,
                         onSelectSession = viewModel::selectSession,
                         onDeleteSession = viewModel::deleteSession,
+                        onExportSession = { session, samples ->
+                            val report = DiagnosticExporter.buildSessionReport(
+                                context = context,
+                                session = session,
+                                samples = samples,
+                                keepAliveStatus = keepAliveStatus,
+                                shizukuStatus = shizukuStatus,
+                                displayInfo = displayInfoProvider()
+                            )
+                            DiagnosticExporter.shareReportFile(
+                                context = context,
+                                fileNamePrefix = "voltpulse_archive_${session.id}",
+                                content = report
+                            ).onFailure {
+                                DiagnosticExporter.copyToClipboard(context, "VoltPulse诊断报告", report)
+                                Toast.makeText(context, "分享失败，已自动复制诊断报告到剪贴板", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onCopySessionReport = { session, samples ->
+                            val report = DiagnosticExporter.buildSessionReport(
+                                context = context,
+                                session = session,
+                                samples = samples,
+                                keepAliveStatus = keepAliveStatus,
+                                shizukuStatus = shizukuStatus,
+                                displayInfo = displayInfoProvider()
+                            )
+                            DiagnosticExporter.copyToClipboard(context, "VoltPulse诊断报告", report)
+                            Toast.makeText(context, "已复制 ARCHIVE #${session.id} 诊断报告", Toast.LENGTH_SHORT).show()
+                        },
                         onStartMonitorNow = {
                             viewModel.startMonitorServiceIfIdle()
                             currentTab = VoltPulseTab.MONITOR
@@ -190,6 +282,7 @@ private fun VoltPulseRoot(
 
                     VoltPulseTab.SENTINEL -> SentinelScreen(
                         keepAliveStatus = keepAliveStatus,
+                        shizukuStatus = shizukuStatus,
                         settings = settings,
                         sysfsNodes = sysfsNodes,
                         onToggleAutoStart = viewModel::setAutoStartOnCharge,
@@ -197,6 +290,28 @@ private fun VoltPulseRoot(
                         onRequestNotificationPermission = requestNotifications,
                         onOpenBatteryOptimization = { KeepAliveHelper.openBatteryOptimizationSettings(context) },
                         onOpenOemAutoStart = { KeepAliveHelper.openOemAutoStartOrAppInfo(context) },
+                        onOpenShizukuApp = { ShizukuHelper.openShizukuApp(context) },
+                        onDownloadShizuku = { ShizukuHelper.openShizukuDownload(context) },
+                        onRequestShizukuPermission = viewModel::requestShizukuPermission,
+                        onApplyShizukuHardening = viewModel::applyShizukuHardening,
+                        onRefreshShizuku = { viewModel.refreshShizukuStatus() },
+                        onExportGlobalLogs = {
+                            val report = DiagnosticExporter.buildGlobalReport(
+                                context = context,
+                                sessions = sessions,
+                                keepAliveStatus = keepAliveStatus,
+                                shizukuStatus = shizukuStatus,
+                                displayInfo = displayInfoProvider()
+                            )
+                            DiagnosticExporter.shareReportFile(
+                                context = context,
+                                fileNamePrefix = "voltpulse_global_diag",
+                                content = report
+                            ).onFailure {
+                                DiagnosticExporter.copyToClipboard(context, "VoltPulse全局诊断", report)
+                                Toast.makeText(context, "分享失败，已自动复制到剪贴板", Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         onRescanSysfs = viewModel::rescanSysfs,
                         modifier = contentMod
                     )

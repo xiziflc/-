@@ -44,6 +44,7 @@ import com.example.R
 import com.example.data.CalibrationSettings
 import com.example.data.SysfsProbeItem
 import com.example.monitor.KeepAliveStatus
+import com.example.monitor.ShizukuStatus
 import com.example.ui.components.CyberBadge
 import com.example.ui.components.CyberOutlinedButton
 import com.example.ui.components.CyberPanel
@@ -54,6 +55,7 @@ import com.example.ui.theme.LocalCyberColors
 @Composable
 fun SentinelScreen(
     keepAliveStatus: KeepAliveStatus,
+    shizukuStatus: ShizukuStatus,
     settings: CalibrationSettings,
     sysfsNodes: List<SysfsProbeItem>,
     onToggleAutoStart: (Boolean) -> Unit,
@@ -61,6 +63,12 @@ fun SentinelScreen(
     onRequestNotificationPermission: () -> Unit,
     onOpenBatteryOptimization: () -> Unit,
     onOpenOemAutoStart: () -> Unit,
+    onOpenShizukuApp: () -> Unit,
+    onDownloadShizuku: () -> Unit,
+    onRequestShizukuPermission: () -> Unit,
+    onApplyShizukuHardening: () -> Unit,
+    onRefreshShizuku: () -> Unit,
+    onExportGlobalLogs: () -> Unit,
     onRescanSysfs: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -193,6 +201,162 @@ fun SentinelScreen(
                                     .testTag("sentinel_toggle_service_button")
                             )
                         }
+                    }
+                }
+            }
+
+            // Shizuku Progressive Guidance Card
+            item(key = "shizuku_header") {
+                CyberSectionHeader(
+                    indexTag = "// 00",
+                    title = "Shizuku 进阶保活引导（可选）"
+                )
+            }
+
+            item(key = "shizuku_card") {
+                val shizukuAccent = when {
+                    shizukuStatus.isHardened -> cyber.signalEmerald
+                    shizukuStatus.isReadyForHardening -> cyber.neonCyan
+                    shizukuStatus.isBinderAlive -> cyber.acidYellow
+                    else -> cyber.lucyLavender
+                }
+                val shizukuBadge = when {
+                    shizukuStatus.isHardened -> "已加固"
+                    shizukuStatus.isReadyForHardening -> "待加固"
+                    shizukuStatus.isBinderAlive -> "待授权"
+                    shizukuStatus.isInstalled -> "未启动"
+                    else -> "未安装"
+                }
+
+                CyberPanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    accentColor = shizukuAccent
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Shizuku 免 Root 深度防冻结",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = cyber.lucyPearl
+                                )
+                                CyberBadge(text = shizukuBadge, color = shizukuAccent)
+                            }
+                            IconButton(onClick = onRefreshShizuku) {
+                                Icon(
+                                    imageVector = Icons.Filled.Refresh,
+                                    contentDescription = "刷新 Shizuku 状态",
+                                    tint = shizukuAccent
+                                )
+                            }
+                        }
+
+                        when {
+                            !shizukuStatus.isInstalled -> {
+                                Text(
+                                    text = "未检测到 Shizuku。如果你在熄屏充电时仍遇到系统杀后台或漏采断点，可安装 Shizuku 一键写入系统白名单（不安装也可使用下方常规保活）。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                CyberOutlinedButton(
+                                    text = "了解与下载 Shizuku",
+                                    onClick = onDownloadShizuku,
+                                    accentColor = cyber.lucyLavender,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            !shizukuStatus.isBinderAlive -> {
+                                Text(
+                                    text = "已安装 Shizuku，但后台服务尚未启动。请按以下步骤激活：\n1. 打开 Shizuku → 点击「配对」开启开发者选项与无线调试；\n2. 返回 Shizuku 点击「启动」，完成后回到本页。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    CyberPrimaryButton(
+                                        text = "打开 Shizuku",
+                                        onClick = onOpenShizukuApp,
+                                        accentColor = cyber.acidYellow,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    CyberOutlinedButton(
+                                        text = "重新检测",
+                                        onClick = onRefreshShizuku,
+                                        accentColor = cyber.neonCyan,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            !shizukuStatus.isPermissionGranted -> {
+                                Text(
+                                    text = "Shizuku 服务已运行！授权后本应用将仅执行：加入系统 Doze 白名单、允许后台运行及提升活跃优先级，绝不修改其他系统文件。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                CyberPrimaryButton(
+                                    text = "一键授权 Shizuku",
+                                    onClick = onRequestShizukuPermission,
+                                    accentColor = cyber.neonCyan,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            else -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    CyberBadge(
+                                        text = if (shizukuStatus.dozeWhitelisted) "Doze白名单 ✓" else "Doze白名单 ✗",
+                                        color = if (shizukuStatus.dozeWhitelisted) cyber.signalEmerald else cyber.acidYellow
+                                    )
+                                    CyberBadge(
+                                        text = if (shizukuStatus.runInBackgroundAllowed) "后台放行 ✓" else "后台放行 ✗",
+                                        color = if (shizukuStatus.runInBackgroundAllowed) cyber.signalEmerald else cyber.acidYellow
+                                    )
+                                    CyberBadge(
+                                        text = "桶:${shizukuStatus.standbyBucket}",
+                                        color = if (shizukuStatus.standbyBucket.startsWith("ACTIVE")) cyber.signalEmerald else cyber.lucyLavender
+                                    )
+                                }
+                                if (shizukuStatus.lastActionMessage.isNotBlank()) {
+                                    Text(
+                                        text = shizukuStatus.lastActionMessage,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = shizukuAccent
+                                    )
+                                }
+                                CyberPrimaryButton(
+                                    text = if (shizukuStatus.isHardened) "重新执行 Shizuku 保活加固" else "一键执行 Shizuku 保活加固",
+                                    onClick = onApplyShizukuHardening,
+                                    accentColor = if (shizukuStatus.isHardened) cyber.signalEmerald else cyber.neonCyan,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+
+                        CyberOutlinedButton(
+                            text = "导出全局运行与保活诊断日志",
+                            onClick = onExportGlobalLogs,
+                            accentColor = cyber.lucyLavender,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }

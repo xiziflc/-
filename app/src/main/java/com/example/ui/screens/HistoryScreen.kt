@@ -46,6 +46,7 @@ import com.example.ui.components.CyberBadge
 import com.example.ui.components.CyberOutlinedButton
 import com.example.ui.components.CyberPanel
 import com.example.ui.components.CyberPrimaryButton
+import com.example.ui.components.CyberPrimaryButton
 import com.example.ui.components.CyberSectionHeader
 import com.example.ui.components.FullTelemetryCurveChart
 import com.example.ui.theme.LocalCyberColors
@@ -61,6 +62,8 @@ fun HistoryScreen(
     selectedSamples: List<TelemetrySampleEntity>,
     onSelectSession: (Long?) -> Unit,
     onDeleteSession: (Long) -> Unit,
+    onExportSession: (ChargingSessionEntity, List<TelemetrySampleEntity>) -> Unit,
+    onCopySessionReport: (ChargingSessionEntity, List<TelemetrySampleEntity>) -> Unit,
     onStartMonitorNow: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -72,6 +75,8 @@ fun HistoryScreen(
             ratedCapacityMah = ratedCapacityMah,
             onBack = { onSelectSession(null) },
             onDelete = { onDeleteSession(selectedSession.id) },
+            onExport = { onExportSession(selectedSession, selectedSamples) },
+            onCopy = { onCopySessionReport(selectedSession, selectedSamples) },
             modifier = modifier
         )
         return
@@ -332,6 +337,8 @@ private fun SessionDetailView(
     ratedCapacityMah: Int,
     onBack: () -> Unit,
     onDelete: () -> Unit,
+    onExport: () -> Unit,
+    onCopy: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val cyber = LocalCyberColors.current
@@ -480,6 +487,26 @@ private fun SessionDetailView(
                             )
                         }
                     }
+                }
+            }
+
+            item(key = "detail_export_actions") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CyberPrimaryButton(
+                        text = "导出诊断日志 (.txt)",
+                        onClick = onExport,
+                        accentColor = cyber.neonCyan,
+                        modifier = Modifier.weight(1f)
+                    )
+                    CyberOutlinedButton(
+                        text = "复制报告",
+                        onClick = onCopy,
+                        accentColor = cyber.lucyLavender,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
 

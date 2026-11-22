@@ -103,6 +103,34 @@ fun FullTelemetryCurveChart(
     val minTemp = ((samples.minOfOrNull { it.temperatureC } ?: 25f) - 3f).coerceAtLeast(15f)
     val maxTemp = max(minTemp + 10f, (samples.maxOfOrNull { it.temperatureC } ?: 45f) + 3f)
 
+    val minTs = samples.firstOrNull()?.timestampMs ?: 0L
+    val maxTs = samples.lastOrNull()?.timestampMs ?: minTs
+    val totalSpanMs = (maxTs - minTs).coerceAtLeast(0L)
+    val useRealTimeline = samples.size >= 2 && totalSpanMs >= 2000L
+    val gapThresholdMs = 45_000L
+    val gapCount = remember(samples) {
+        if (samples.size < 2) 0
+        else (1 until samples.size).count { samples[it].timestampMs - samples[it - 1].timestampMs > gapThresholdMs }
+    }
+
+    fun nearestIndexForFraction(frac: Float): Int {
+        if (samples.isEmpty()) return 0
+        if (!useRealTimeline) {
+            return (frac * (samples.size - 1)).roundToInt().coerceIn(0, samples.lastIndex)
+        }
+        val targetTs = minTs + (frac * totalSpanMs).toLong()
+        var bestIdx = 0
+        var bestDiff = Long.MAX_VALUE
+        for (i in samples.indices) {
+            val diff = abs(samples[i].timestampMs - targetTs)
+            if (diff < bestDiff) {
+                bestDiff = diff
+                bestIdx = i
+            }
+        }
+        return bestIdx
+    }
+
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -217,18 +245,18 @@ fun FullTelemetryCurveChart(
                     .fillMaxWidth()
                     .height(chartHeight)
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
-                    .pointerInput(samples.size) {
+                    .pointerInput(samples) {
                         detectTapGestures { offset ->
                             val frac = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
-                            inspectedIndex = (frac * (samples.size - 1)).roundToInt()
+                            inspectedIndex = nearestIndexForFraction(frac)
                         }
                     }
-                    .pointerInput(samples.size) {
+                    .pointerInput(samples) {
                         detectHorizontalDragGestures(
                             onHorizontalDrag = { change, _ ->
                                 change.consume()
                                 val frac = (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
-                                inspectedIndex = (frac * (samples.size - 1)).roundToInt()
+                                inspectedIndex = nearestIndexForFraction(frac)
                             }
                         )
                     }
@@ -260,6 +288,31 @@ fun FullTelemetryCurveChart(
                 }
 
                 val stepX = w / (samples.size - 1).coerceAtLeast(1)
+                fun xFor(idx: Int): Float = if (useRealTimeline) {
+                    ((samples[idx].timestampMs - minTs).toFloat() / totalSpanMs.toFloat()).coerceIn(0f, 1f) * w
+                } else {
+                    idx * stepX
+                }
+
+                // Highlight sampling gaps (>45s) on real timeline
+                for (i in 1 until samples.size) {
+                    if (samples[i].timestampMs - samples[i - 1].timestampMs > gapThresholdMs) {
+                        val gx1 = xFor(i - 1)
+                        val gx2 = xFor(i)
+                        drawRect(
+                            color = cyber.lucyRose.copy(alpha = 0.08f),
+                            topLeft = Offset(gx1, 0f),
+                            size = androidx.compose.ui.geometry.Size((gx2 - gx1).coerceAtLeast(2f), h)
+                        )
+                        drawLine(
+                            color = cyber.lucyRose.copy(alpha = 0.45f),
+                            start = Offset(gx1, 0f),
+                            end = Offset(gx1, h),
+                            strokeWidth = 1f,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
+                        )
+                    }
+                }
 
                 fun normFor(channel: CurveChannel, pt: CurveDataPoint): Float = when (channel) {
                     CurveChannel.POWER -> (pt.powerWatts / maxPower).coerceIn(0f, 1f)
@@ -273,21 +326,32 @@ fun FullTelemetryCurveChart(
                     val color = channelColor(channel)
                     val linePath = Path()
                     val fillPath = Path()
+                    var segmentStartX = 0f
+                    var hasOpenSegment = false
 
                     samples.forEachIndexed { idx, pt ->
-                        val x = idx * stepX
+                        val x = xFor(idx)
                         val y = h - normFor(channel, pt) * h
-                        if (idx == 0) {
+                        val isGapAfterPrev = idx > 0 &&
+                            (samples[idx].timestampMs - samples[idx - 1].timestampMs > gapThresholdMs)
+
+                        if (idx == 0 || isGapAfterPrev) {
+                            if (fillArea && hasOpenSegment) {
+                                fillPath.lineTo(xFor(idx - 1), h)
+                                fillPath.close()
+                            }
                             linePath.moveTo(x, y)
                             if (fillArea) {
                                 fillPath.moveTo(x, h)
                                 fillPath.lineTo(x, y)
                             }
+                            segmentStartX = x
+                            hasOpenSegment = true
                         } else {
                             linePath.lineTo(x, y)
                             if (fillArea) fillPath.lineTo(x, y)
                         }
-                        if (fillArea && idx == samples.lastIndex) {
+                        if (fillArea && idx == samples.lastIndex && hasOpenSegment) {
                             fillPath.lineTo(x, h)
                             fillPath.close()
                         }
@@ -335,7 +399,7 @@ fun FullTelemetryCurveChart(
 
                 // Lucy Monowire Crosshair & Active Highlight Dots
                 val highlightIdx = safeInspectedIdx ?: samples.lastIndex
-                val hx = highlightIdx * stepX
+                val hx = xFor(highlightIdx)
                 if (safeInspectedIdx != null) {
                     drawLine(
                         color = cyber.lucyPearl.copy(alpha = 0.78f),
@@ -374,9 +438,13 @@ fun FullTelemetryCurveChart(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "可滑动曲线查点 · 峰值 ${String.format(Locale.US, "%.1fW", peakW)} / 均值 ${String.format(Locale.US, "%.1fW", avgW)} / 最高 ${String.format(Locale.US, "%.1f°C", peakT)}",
+                    text = if (gapCount > 0) {
+                        "峰值 ${String.format(Locale.US, "%.1fW", peakW)} / 均值 ${String.format(Locale.US, "%.1fW", avgW)} / 断采 ${gapCount}处"
+                    } else {
+                        "可滑动曲线查点 · 峰值 ${String.format(Locale.US, "%.1fW", peakW)} / 均值 ${String.format(Locale.US, "%.1fW", avgW)} / 最高 ${String.format(Locale.US, "%.1f°C", peakT)}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
-                    color = cyber.lucyLavender,
+                    color = if (gapCount > 0) cyber.lucyRose else cyber.lucyLavender,
                     maxLines = 1
                 )
                 Text(

@@ -12,6 +12,7 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.MainActivity
@@ -19,6 +20,7 @@ import com.example.R
 import com.example.VoltPulseApp
 import com.example.data.BatteryTelemetry
 import com.example.data.CalibrationSettings
+import com.example.data.DiagnosticLogger
 import com.example.data.db.ChargingSessionEntity
 import com.example.data.db.TelemetrySampleEntity
 import kotlinx.coroutines.CoroutineScope
@@ -59,8 +61,10 @@ class ChargingMonitorService : Service() {
     private var lastPersistedLevel = -1
     private var lastPersistedPower = -1f
     private var unpluggedSinceMs: Long? = null
+    private var idleZeroPowerSinceMs: Long? = null
     private var highTempAlertFired = false
     private var targetChargeAlertFired = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private var lastBatteryIntent: Intent? = null
 
@@ -124,10 +128,36 @@ class ChargingMonitorService : Service() {
         }
 
         if (samplingJob == null || samplingJob?.isActive != true) {
+            DiagnosticLogger.log("SERVICE", "ChargingMonitorService started (autoStopOnUnplug=$autoStopOnUnplug)")
             startSamplingLoop()
         }
 
         return START_STICKY
+    }
+
+    private fun acquireWakeLockIfNeeded() {
+        val wl = wakeLock ?: run {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VoltPulse::ChargingTelemetryLock").apply {
+                setReferenceCounted(false)
+            }.also { wakeLock = it }
+        }
+        if (!wl.isHeld) {
+            runCatching {
+                wl.acquire(WAKE_LOCK_TIMEOUT_MS)
+                DiagnosticLogger.log("WAKELOCK", "Acquired PARTIAL_WAKE_LOCK")
+            }
+        }
+    }
+
+    private fun releaseWakeLockIfHeld() {
+        val wl = wakeLock ?: return
+        if (wl.isHeld) {
+            runCatching {
+                wl.release()
+                DiagnosticLogger.log("WAKELOCK", "Released PARTIAL_WAKE_LOCK")
+            }
+        }
     }
 
     private fun startSamplingLoop() {
@@ -144,10 +174,34 @@ class ChargingMonitorService : Service() {
 
                 if (telemetry.isPlugged) {
                     unpluggedSinceMs = null
-                    recordChargingSample(app, telemetry, now)
-                    checkSafetyAlerts(telemetry)
+                    val isIdleZero = telemetry.powerWatts < IDLE_POWER_THRESHOLD_W &&
+                        abs(telemetry.calibratedCurrentMa) < IDLE_CURRENT_THRESHOLD_MA
+
+                    if (isIdleZero) {
+                        val idleStart = idleZeroPowerSinceMs ?: now.also { idleZeroPowerSinceMs = it }
+                        if (activeSession != null && now - idleStart >= IDLE_COMPLETE_DELAY_MS) {
+                            DiagnosticLogger.log(
+                                "SESSION",
+                                "Auto-completing session #${activeSession?.id} due to idle 0W for ${(now - idleStart) / 1000}s (SOC=${telemetry.levelPct}%)"
+                            )
+                            completeActiveSession(app, now)
+                            releaseWakeLockIfHeld()
+                        } else if (activeSession != null) {
+                            // Keep sampling during brief zero-power dips (e.g. handshake renegotiation)
+                            acquireWakeLockIfNeeded()
+                            recordChargingSample(app, telemetry, now)
+                        }
+                    } else {
+                        idleZeroPowerSinceMs = null
+                        acquireWakeLockIfNeeded()
+                        recordChargingSample(app, telemetry, now)
+                        checkSafetyAlerts(telemetry)
+                    }
                 } else {
+                    idleZeroPowerSinceMs = null
+                    releaseWakeLockIfHeld()
                     if (activeSession != null) {
+                        DiagnosticLogger.log("SESSION", "Unplugged -> completing session #${activeSession?.id}")
                         completeActiveSession(app, now)
                     }
                     if (autoStopOnUnplug) {
@@ -216,6 +270,12 @@ class ChargingMonitorService : Service() {
             return
         }
 
+        if (lastSampleTimeMs > 0L && now - lastSampleTimeMs >= 15_000L) {
+            DiagnosticLogger.log(
+                "SAMPLE_GAP",
+                "Session #${existing.id} gap=${(now - lastSampleTimeMs) / 1000}s, SOC=${telemetry.levelPct}%, P=${String.format(Locale.US, "%.1f", telemetry.powerWatts)}W"
+            )
+        }
         val dtHours = ((now - lastSampleTimeMs).coerceIn(0L, 30_000L)) / 3_600_000.0
         if (telemetry.calibratedCurrentMa > 0f) {
             accumulatedMah += telemetry.calibratedCurrentMa * dtHours
@@ -375,6 +435,8 @@ class ChargingMonitorService : Service() {
     }
 
     override fun onDestroy() {
+        releaseWakeLockIfHeld()
+        DiagnosticLogger.log("SERVICE", "ChargingMonitorService onDestroy")
         runCatching { unregisterReceiver(batteryReceiver) }
         val app = application as VoltPulseApp
         val sessionToClose = activeSession
@@ -408,6 +470,10 @@ class ChargingMonitorService : Service() {
         private const val SAMPLE_INTERVAL_MS = 2000L
         private const val PERSIST_POINT_INTERVAL_MS = 5000L
         private const val AUTO_STOP_DELAY_MS = 6000L
+        private const val IDLE_POWER_THRESHOLD_W = 1.0f
+        private const val IDLE_CURRENT_THRESHOLD_MA = 120f
+        private const val IDLE_COMPLETE_DELAY_MS = 3 * 60 * 1000L
+        private const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()

@@ -37,11 +37,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import android.os.BatteryManager
 import com.example.data.BatteryTelemetry
 import com.example.data.CalibrationSettings
+import com.example.data.DetectedProtocol
+import com.example.data.DeviceProfileCatalog
 import com.example.data.DeviceProfileId
+import com.example.data.ProtocolDetectionSource
 import com.example.data.ProtocolKind
+import com.example.ui.components.CyberGridBackdrop
+import com.example.ui.theme.VoltPulseTheme
 import com.example.ui.components.CurveDataPoint
 import com.example.ui.components.CyberBadge
 import com.example.ui.components.CyberChipToggle
@@ -574,6 +581,56 @@ private fun TelemetryMetricCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0A0814, widthDp = 412, heightDp = 915)
+@Composable
+private fun MonitorScreenPreview() {
+    val now = 1_700_000_000_000L
+    val sampleCurve = List(12) { idx ->
+        CurveDataPoint(
+            timestampMs = now + idx * 5_000L,
+            powerWatts = 45f + (idx * 4f).coerceAtMost(42f),
+            currentMa = 5000f + idx * 350f,
+            voltageV = 8.8f + idx * 0.02f,
+            temperatureC = 32.0f + idx * 0.25f,
+            levelPct = 55 + idx
+        )
+    }
+    VoltPulseTheme {
+        CyberGridBackdrop(modifier = Modifier.fillMaxSize()) {
+            MonitorScreen(
+                telemetry = BatteryTelemetry(
+                    levelPct = 68,
+                    status = BatteryManager.BATTERY_STATUS_CHARGING,
+                    plugged = BatteryManager.BATTERY_PLUGGED_AC,
+                    health = BatteryManager.BATTERY_HEALTH_GOOD,
+                    temperatureC = 34.8f,
+                    activeProfile = DeviceProfileCatalog.oppoFindX8Ultra,
+                    detectedProtocol = DetectedProtocol(
+                        kind = ProtocolKind.SUPERVOOC,
+                        label = "SuperVOOC 100W",
+                        source = ProtocolDetectionSource.SYSFS_KERNEL,
+                        detail = "10V / 8.8A"
+                    ),
+                    calibratedVoltageV = 8.95f,
+                    calibratedCurrentMa = 9820f,
+                    calibratedAvgCurrentMa = 9120f,
+                    powerWatts = 87.9f,
+                    estimatedMinutesToFull = 14
+                ),
+                settings = CalibrationSettings(),
+                liveWaveform = sampleCurve,
+                fullSessionCurve = sampleCurve,
+                isServiceRunning = true,
+                isSentinelArmed = false,
+                onToggleService = {},
+                onSelectDeviceProfile = {},
+                onQuickVoltageMultiplier = {},
+                onQuickInvertSign = {}
             )
         }
     }

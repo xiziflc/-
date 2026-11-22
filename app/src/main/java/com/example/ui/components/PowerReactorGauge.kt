@@ -33,11 +33,18 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.BatteryManager
 import com.example.data.BatteryTelemetry
 import com.example.data.ChargeSpeedTier
+import com.example.data.DetectedProtocol
+import com.example.data.DeviceProfileCatalog
+import com.example.data.ProtocolDetectionSource
+import com.example.data.ProtocolKind
 import com.example.ui.theme.LocalCyberColors
+import com.example.ui.theme.VoltPulseTheme
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
@@ -286,5 +293,34 @@ fun PowerReactorGauge(
                 color = cyber.neonCyan.copy(alpha = 0.9f)
             )
         }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0A0814)
+@Composable
+private fun PowerReactorGaugePreview() {
+    VoltPulseTheme {
+        PowerReactorGauge(
+            telemetry = BatteryTelemetry(
+                levelPct = 68,
+                status = BatteryManager.BATTERY_STATUS_CHARGING,
+                plugged = BatteryManager.BATTERY_PLUGGED_AC,
+                health = BatteryManager.BATTERY_HEALTH_GOOD,
+                temperatureC = 34.2f,
+                activeProfile = DeviceProfileCatalog.oppoFindX8Ultra,
+                detectedProtocol = DetectedProtocol(
+                    kind = ProtocolKind.SUPERVOOC,
+                    label = "SuperVOOC 100W",
+                    source = ProtocolDetectionSource.SYSFS_KERNEL,
+                    detail = "10V / 8.8A"
+                ),
+                calibratedVoltageV = 8.95f,
+                calibratedCurrentMa = 9820f,
+                powerWatts = 87.9f,
+                estimatedMinutesToFull = 14
+            ),
+            tempAlertThresholdC = 43f,
+            modifier = Modifier.padding(16.dp)
+        )
     }
 }

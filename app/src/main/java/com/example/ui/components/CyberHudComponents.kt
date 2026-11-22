@@ -38,10 +38,12 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.ui.theme.LocalCyberColors
+import com.example.ui.theme.VoltPulseTheme
 
 @Composable
 fun CyberGridBackdrop(
@@ -436,5 +438,20 @@ fun CyberChipToggle(
                 maxLines = 1
             )
         }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0A0814)
+@Composable
+private fun LucyMoonHeroBannerPreview() {
+    VoltPulseTheme {
+        LucyMoonHeroBanner(
+            deviceTitle = "OPPO Find X8 Ultra · 串联双电芯 · 6100mAh 硅碳",
+            protocolBadge = "SuperVOOC",
+            levelPct = 68,
+            statusBadge = "ICE 监控中",
+            statusColor = LocalCyberColors.current.signalEmerald,
+            modifier = Modifier.padding(16.dp)
+        )
     }
 }
