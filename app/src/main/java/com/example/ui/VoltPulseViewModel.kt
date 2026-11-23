@@ -165,7 +165,9 @@ class VoltPulseViewModel(application: Application) : AndroidViewModel(applicatio
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_BATTERY_CHANGED) {
                 latestBatteryIntent = intent
-                refreshTelemetryOnce(appendWaveform = false)
+                viewModelScope.launch(Dispatchers.IO) {
+                    refreshTelemetryOnce(appendWaveform = false)
+                }
             }
         }
     }
@@ -180,13 +182,13 @@ class VoltPulseViewModel(application: Application) : AndroidViewModel(applicatio
         refreshShizukuStatus()
         rescanSysfs()
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             settings.collect {
                 refreshTelemetryOnce(appendWaveform = false)
             }
         }
 
-        viewModelScope.launch(Dispatchers.Default) {
+        viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 refreshTelemetryOnce(appendWaveform = true)
                 delay(1000L)

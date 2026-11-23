@@ -163,19 +163,7 @@ private fun VoltPulseRoot(
     val cyber = LocalCyberColors.current
 
     var currentTab by rememberSaveable { mutableStateOf(VoltPulseTab.MONITOR) }
-
-    val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
-    val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val liveWaveform by viewModel.liveWaveform.collectAsStateWithLifecycle()
-    val fullSessionCurve by viewModel.fullSessionCurve.collectAsStateWithLifecycle()
-    val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val selectedSession by viewModel.selectedSession.collectAsStateWithLifecycle()
-    val selectedSamples by viewModel.selectedSessionSamples.collectAsStateWithLifecycle()
-    val isServiceRunning by viewModel.isServiceRunning.collectAsStateWithLifecycle()
-    val isSentinelArmed by viewModel.isSentinelArmed.collectAsStateWithLifecycle()
-    val keepAliveStatus by viewModel.keepAliveStatus.collectAsStateWithLifecycle()
-    val shizukuStatus by viewModel.shizukuStatus.collectAsStateWithLifecycle()
-    val sysfsNodes by viewModel.sysfsNodes.collectAsStateWithLifecycle()
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -197,7 +185,7 @@ private fun VoltPulseRoot(
     }
 
     val requestNotifications: () -> Unit = {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !keepAliveStatus.notificationsEnabled) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !viewModel.keepAliveStatus.value.notificationsEnabled) {
             notificationPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             KeepAliveHelper.openNotificationSettings(context)
@@ -214,121 +202,34 @@ private fun VoltPulseRoot(
 
             val screenContent: @Composable (Modifier) -> Unit = { contentMod ->
                 when (currentTab) {
-                    VoltPulseTab.MONITOR -> MonitorScreen(
-                        telemetry = telemetry,
-                        settings = settings,
-                        liveWaveform = liveWaveform,
-                        fullSessionCurve = fullSessionCurve,
-                        isServiceRunning = isServiceRunning,
-                        isSentinelArmed = isSentinelArmed,
-                        onToggleService = {
-                            if (!isServiceRunning &&
-                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                !keepAliveStatus.notificationsEnabled
+                    VoltPulseTab.MONITOR -> MonitorTabHost(
+                        viewModel = viewModel,
+                        onRequestNotificationPermission = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                !viewModel.keepAliveStatus.value.notificationsEnabled
                             ) {
                                 notificationPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                             }
-                            viewModel.toggleMonitorService()
-                        },
-                        onSelectDeviceProfile = viewModel::applyDeviceProfile,
-                        onQuickVoltageMultiplier = viewModel::setVoltageMultiplier,
-                        onQuickInvertSign = viewModel::setInvertCurrentSign,
-                        modifier = contentMod
-                    )
-
-                    VoltPulseTab.HISTORY -> HistoryScreen(
-                        sessions = sessions,
-                        ratedCapacityMah = settings.ratedCapacityMah,
-                        selectedSession = selectedSession,
-                        selectedSamples = selectedSamples,
-                        onSelectSession = viewModel::selectSession,
-                        onDeleteSession = viewModel::deleteSession,
-                        onExportSession = { session, samples ->
-                            val report = DiagnosticExporter.buildSessionReport(
-                                context = context,
-                                session = session,
-                                samples = samples,
-                                keepAliveStatus = keepAliveStatus,
-                                shizukuStatus = shizukuStatus,
-                                displayInfo = displayInfoProvider()
-                            )
-                            DiagnosticExporter.shareReportFile(
-                                context = context,
-                                fileNamePrefix = "voltpulse_archive_${session.id}",
-                                content = report
-                            ).onFailure {
-                                DiagnosticExporter.copyToClipboard(context, "VoltPulse诊断报告", report)
-                                Toast.makeText(context, "分享失败，已自动复制诊断报告到剪贴板", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onCopySessionReport = { session, samples ->
-                            val report = DiagnosticExporter.buildSessionReport(
-                                context = context,
-                                session = session,
-                                samples = samples,
-                                keepAliveStatus = keepAliveStatus,
-                                shizukuStatus = shizukuStatus,
-                                displayInfo = displayInfoProvider()
-                            )
-                            DiagnosticExporter.copyToClipboard(context, "VoltPulse诊断报告", report)
-                            Toast.makeText(context, "已复制 ARCHIVE #${session.id} 诊断报告", Toast.LENGTH_SHORT).show()
-                        },
-                        onStartMonitorNow = {
-                            viewModel.startMonitorServiceIfIdle()
-                            currentTab = VoltPulseTab.MONITOR
                         },
                         modifier = contentMod
                     )
 
-                    VoltPulseTab.SENTINEL -> SentinelScreen(
-                        keepAliveStatus = keepAliveStatus,
-                        shizukuStatus = shizukuStatus,
-                        settings = settings,
-                        sysfsNodes = sysfsNodes,
-                        onToggleAutoStart = viewModel::setAutoStartOnCharge,
-                        onToggleService = viewModel::toggleMonitorService,
-                        onRequestNotificationPermission = requestNotifications,
-                        onOpenBatteryOptimization = { KeepAliveHelper.openBatteryOptimizationSettings(context) },
-                        onOpenOemAutoStart = { KeepAliveHelper.openOemAutoStartOrAppInfo(context) },
-                        onOpenShizukuApp = { ShizukuHelper.openShizukuApp(context) },
-                        onDownloadShizuku = { ShizukuHelper.openShizukuDownload(context) },
-                        onRequestShizukuPermission = viewModel::requestShizukuPermission,
-                        onApplyShizukuHardening = viewModel::applyShizukuHardening,
-                        onRefreshShizuku = { viewModel.refreshShizukuStatus() },
-                        onExportGlobalLogs = {
-                            val report = DiagnosticExporter.buildGlobalReport(
-                                context = context,
-                                sessions = sessions,
-                                keepAliveStatus = keepAliveStatus,
-                                shizukuStatus = shizukuStatus,
-                                displayInfo = displayInfoProvider()
-                            )
-                            DiagnosticExporter.shareReportFile(
-                                context = context,
-                                fileNamePrefix = "voltpulse_global_diag",
-                                content = report
-                            ).onFailure {
-                                DiagnosticExporter.copyToClipboard(context, "VoltPulse全局诊断", report)
-                                Toast.makeText(context, "分享失败，已自动复制到剪贴板", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onRescanSysfs = viewModel::rescanSysfs,
+                    VoltPulseTab.HISTORY -> HistoryTabHost(
+                        viewModel = viewModel,
+                        displayInfoProvider = displayInfoProvider,
+                        onSwitchToMonitor = { currentTab = VoltPulseTab.MONITOR },
                         modifier = contentMod
                     )
 
-                    VoltPulseTab.CALIBRATION -> CalibrationScreen(
-                        telemetry = telemetry,
-                        settings = settings,
-                        onSelectDeviceProfile = viewModel::applyDeviceProfile,
-                        onVoltageMultiplierChange = viewModel::setVoltageMultiplier,
-                        onCurrentMultiplierChange = viewModel::setCurrentMultiplier,
-                        onInvertSignChange = viewModel::setInvertCurrentSign,
-                        onUnitModeChange = viewModel::setCurrentUnitMode,
-                        onRatedCapacityChange = viewModel::setRatedCapacityMah,
-                        onEnableAlertsChange = viewModel::setEnableAlerts,
-                        onTempThresholdChange = viewModel::setTempAlertThreshold,
-                        onTargetPctChange = viewModel::setTargetChargeAlertPct,
-                        onResetCalibration = viewModel::resetCalibration,
+                    VoltPulseTab.SENTINEL -> SentinelTabHost(
+                        viewModel = viewModel,
+                        displayInfoProvider = displayInfoProvider,
+                        onRequestNotifications = requestNotifications,
+                        modifier = contentMod
+                    )
+
+                    VoltPulseTab.CALIBRATION -> CalibrationTabHost(
+                        viewModel = viewModel,
                         modifier = contentMod
                     )
                 }
@@ -428,4 +329,170 @@ private fun VoltPulseRoot(
             }
         }
     }
+}
+
+@Composable
+private fun MonitorTabHost(
+    viewModel: VoltPulseViewModel,
+    onRequestNotificationPermission: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val liveWaveform by viewModel.liveWaveform.collectAsStateWithLifecycle()
+    val fullSessionCurve by viewModel.fullSessionCurve.collectAsStateWithLifecycle()
+    val isServiceRunning by viewModel.isServiceRunning.collectAsStateWithLifecycle()
+    val isSentinelArmed by viewModel.isSentinelArmed.collectAsStateWithLifecycle()
+
+    MonitorScreen(
+        telemetry = telemetry,
+        settings = settings,
+        liveWaveform = liveWaveform,
+        fullSessionCurve = fullSessionCurve,
+        isServiceRunning = isServiceRunning,
+        isSentinelArmed = isSentinelArmed,
+        onToggleService = {
+            if (!isServiceRunning) {
+                onRequestNotificationPermission()
+            }
+            viewModel.toggleMonitorService()
+        },
+        onSelectDeviceProfile = viewModel::applyDeviceProfile,
+        onQuickVoltageMultiplier = viewModel::setVoltageMultiplier,
+        onQuickInvertSign = viewModel::setInvertCurrentSign,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun HistoryTabHost(
+    viewModel: VoltPulseViewModel,
+    displayInfoProvider: () -> String,
+    onSwitchToMonitor: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val selectedSession by viewModel.selectedSession.collectAsStateWithLifecycle()
+    val selectedSamples by viewModel.selectedSessionSamples.collectAsStateWithLifecycle()
+
+    HistoryScreen(
+        sessions = sessions,
+        ratedCapacityMah = settings.ratedCapacityMah,
+        selectedSession = selectedSession,
+        selectedSamples = selectedSamples,
+        onSelectSession = viewModel::selectSession,
+        onDeleteSession = viewModel::deleteSession,
+        onExportSession = { session, samples ->
+            val report = DiagnosticExporter.buildSessionReport(
+                context = context,
+                session = session,
+                samples = samples,
+                keepAliveStatus = viewModel.keepAliveStatus.value,
+                shizukuStatus = viewModel.shizukuStatus.value,
+                displayInfo = displayInfoProvider()
+            )
+            DiagnosticExporter.shareReportFile(
+                context = context,
+                fileNamePrefix = "voltpulse_archive_${session.id}",
+                content = report
+            ).onFailure {
+                DiagnosticExporter.copyToClipboard(context, "VoltPulse诊断报告", report)
+                Toast.makeText(context, "分享失败，已自动复制诊断报告到剪贴板", Toast.LENGTH_SHORT).show()
+            }
+        },
+        onCopySessionReport = { session, samples ->
+            val report = DiagnosticExporter.buildSessionReport(
+                context = context,
+                session = session,
+                samples = samples,
+                keepAliveStatus = viewModel.keepAliveStatus.value,
+                shizukuStatus = viewModel.shizukuStatus.value,
+                displayInfo = displayInfoProvider()
+            )
+            DiagnosticExporter.copyToClipboard(context, "VoltPulse诊断报告", report)
+            Toast.makeText(context, "已复制 ARCHIVE #${session.id} 诊断报告", Toast.LENGTH_SHORT).show()
+        },
+        onStartMonitorNow = {
+            viewModel.startMonitorServiceIfIdle()
+            onSwitchToMonitor()
+        },
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun SentinelTabHost(
+    viewModel: VoltPulseViewModel,
+    displayInfoProvider: () -> String,
+    onRequestNotifications: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val keepAliveStatus by viewModel.keepAliveStatus.collectAsStateWithLifecycle()
+    val shizukuStatus by viewModel.shizukuStatus.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val sysfsNodes by viewModel.sysfsNodes.collectAsStateWithLifecycle()
+
+    SentinelScreen(
+        keepAliveStatus = keepAliveStatus,
+        shizukuStatus = shizukuStatus,
+        settings = settings,
+        sysfsNodes = sysfsNodes,
+        onToggleAutoStart = viewModel::setAutoStartOnCharge,
+        onToggleService = viewModel::toggleMonitorService,
+        onRequestNotificationPermission = onRequestNotifications,
+        onOpenBatteryOptimization = { KeepAliveHelper.openBatteryOptimizationSettings(context) },
+        onOpenOemAutoStart = { KeepAliveHelper.openOemAutoStartOrAppInfo(context) },
+        onOpenShizukuApp = { ShizukuHelper.openShizukuApp(context) },
+        onDownloadShizuku = { ShizukuHelper.openShizukuDownload(context) },
+        onRequestShizukuPermission = viewModel::requestShizukuPermission,
+        onApplyShizukuHardening = viewModel::applyShizukuHardening,
+        onRefreshShizuku = { viewModel.refreshShizukuStatus() },
+        onExportGlobalLogs = {
+            val report = DiagnosticExporter.buildGlobalReport(
+                context = context,
+                sessions = viewModel.sessions.value,
+                keepAliveStatus = keepAliveStatus,
+                shizukuStatus = shizukuStatus,
+                displayInfo = displayInfoProvider()
+            )
+            DiagnosticExporter.shareReportFile(
+                context = context,
+                fileNamePrefix = "voltpulse_global_diag",
+                content = report
+            ).onFailure {
+                DiagnosticExporter.copyToClipboard(context, "VoltPulse全局诊断", report)
+                Toast.makeText(context, "分享失败，已自动复制到剪贴板", Toast.LENGTH_SHORT).show()
+            }
+        },
+        onRescanSysfs = viewModel::rescanSysfs,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun CalibrationTabHost(
+    viewModel: VoltPulseViewModel,
+    modifier: Modifier = Modifier
+) {
+    val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+
+    CalibrationScreen(
+        telemetry = telemetry,
+        settings = settings,
+        onSelectDeviceProfile = viewModel::applyDeviceProfile,
+        onVoltageMultiplierChange = viewModel::setVoltageMultiplier,
+        onCurrentMultiplierChange = viewModel::setCurrentMultiplier,
+        onInvertSignChange = viewModel::setInvertCurrentSign,
+        onUnitModeChange = viewModel::setCurrentUnitMode,
+        onRatedCapacityChange = viewModel::setRatedCapacityMah,
+        onEnableAlertsChange = viewModel::setEnableAlerts,
+        onTempThresholdChange = viewModel::setTempAlertThreshold,
+        onTargetPctChange = viewModel::setTargetChargeAlertPct,
+        onResetCalibration = viewModel::resetCalibration,
+        modifier = modifier
+    )
 }

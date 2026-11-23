@@ -54,6 +54,13 @@ android {
       // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
     }
+    create("benchmark") {
+      initWith(buildTypes.getByName("release"))
+      signingConfig = signingConfigs.getByName("debugConfig")
+      matchingFallbacks += listOf("release")
+      isDebuggable = false
+      isMinifyEnabled = true
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11

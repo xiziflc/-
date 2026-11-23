@@ -8,7 +8,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,15 +22,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -105,147 +106,188 @@ fun PowerReactorGauge(
         label = "glowAlpha"
     )
 
+    val sweepColors = remember(isOverheating, cyber) {
+        if (isOverheating) {
+            listOf(cyber.signalAmber, cyber.monowireCrimson, cyber.alertCrimson)
+        } else {
+            listOf(cyber.neonCyan, cyber.lucyPearl, cyber.lucyLavender, cyber.lucyRose, cyber.neonCyan)
+        }
+    }
+
     Box(
         modifier = modifier
             .widthIn(max = 264.dp)
             .aspectRatio(1f),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val minDim = size.minDimension
-            val center = Offset(size.width / 2f, size.height / 2f)
-            val outerRadius = minDim * 0.47f
-            val arcRadius = minDim * 0.40f
-            val monowireRadius = minDim * 0.33f
-            val moonRadius = minDim * 0.24f
-
-            // Ambient Lucy iridescent halo
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        cyber.lucyLavender.copy(alpha = if (telemetry.isCharging) glowAlpha else 0.10f),
-                        cyber.neonCyan.copy(alpha = 0.05f),
-                        Color.Transparent
-                    ),
-                    center = center,
-                    radius = outerRadius * 1.06f
-                ),
-                radius = outerRadius * 1.06f,
-                center = center
-            )
-
-            // Subtle Lunar disc & crescent highlight behind digital readout
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        cyber.lucyPearl.copy(alpha = 0.11f),
-                        cyber.lucyLavender.copy(alpha = 0.05f),
-                        Color.Transparent
-                    ),
-                    center = Offset(center.x - moonRadius * 0.2f, center.y - moonRadius * 0.25f),
-                    radius = moonRadius * 1.15f
-                ),
-                radius = moonRadius,
-                center = center
-            )
-            drawCircle(
-                color = cyber.lucyPearl.copy(alpha = 0.16f),
-                radius = moonRadius,
-                center = center,
-                style = Stroke(width = 1.dp.toPx())
-            )
-
-            // Outer segmented telemetry ticks (48 ticks spanning 270 degrees)
-            val totalTicks = 48
-            val startDeg = 135.0
-            val sweepTotal = 270.0
-            for (i in 0..totalTicks) {
-                val frac = i.toFloat() / totalTicks
-                val deg = startDeg + frac * sweepTotal
-                val rad = deg * PI / 180.0
-                val isMajor = i % 6 == 0
-                val tickLen = if (isMajor) 9.dp.toPx() else 4.5.dp.toPx()
-                val isLit = (frac * 100f) <= telemetry.levelPct
-
-                val tickColor = when {
-                    !isLit -> cyber.gridLine
-                    frac > 0.75f -> cyber.lucyRose
-                    frac > 0.40f -> cyber.lucyLavender
-                    else -> cyber.neonCyan
+        // Layer 1: GPU-composited ambient halo (alpha animated without Canvas redraw)
+        Spacer(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = if (telemetry.isCharging) (glowAlpha / 0.32f) else (0.10f / 0.32f)
                 }
-
-                val startPt = Offset(
-                    x = center.x + (outerRadius - tickLen) * cos(rad).toFloat(),
-                    y = center.y + (outerRadius - tickLen) * sin(rad).toFloat()
-                )
-                val endPt = Offset(
-                    x = center.x + outerRadius * cos(rad).toFloat(),
-                    y = center.y + outerRadius * sin(rad).toFloat()
-                )
-                drawLine(
-                    color = tickColor.copy(alpha = if (isLit) 0.92f else 0.7f),
-                    start = startPt,
-                    end = endPt,
-                    strokeWidth = if (isMajor) 2.2.dp.toPx() else 1.2.dp.toPx(),
-                    cap = StrokeCap.Butt
-                )
-            }
-
-            // Track background arc
-            val arcTopLeft = Offset(center.x - arcRadius, center.y - arcRadius)
-            val arcSize = Size(arcRadius * 2f, arcRadius * 2f)
-            drawArc(
-                color = cyber.gridLine.copy(alpha = 0.55f),
-                startAngle = 135f,
-                sweepAngle = 270f,
-                useCenter = false,
-                topLeft = arcTopLeft,
-                size = arcSize,
-                style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Butt)
-            )
-
-            // Lucy Iridescent Hair Sweep Charge Arc
-            if (animatedLevelSweep > 0.5f) {
-                val sweepColors = if (isOverheating) {
-                    listOf(cyber.signalAmber, cyber.monowireCrimson, cyber.alertCrimson)
-                } else {
-                    listOf(cyber.neonCyan, cyber.lucyPearl, cyber.lucyLavender, cyber.lucyRose, cyber.neonCyan)
+                .drawWithCache {
+                    val center = Offset(size.width / 2f, size.height / 2f)
+                    val haloRadius = size.minDimension * 0.47f * 1.06f
+                    val haloBrush = Brush.radialGradient(
+                        colors = listOf(
+                            cyber.lucyLavender.copy(alpha = 0.32f),
+                            cyber.neonCyan.copy(alpha = 0.16f),
+                            Color.Transparent
+                        ),
+                        center = center,
+                        radius = haloRadius
+                    )
+                    onDrawBehind {
+                        drawCircle(brush = haloBrush, radius = haloRadius, center = center)
+                    }
                 }
-                drawArc(
-                    brush = Brush.sweepGradient(colors = sweepColors, center = center),
-                    startAngle = 135f,
-                    sweepAngle = animatedLevelSweep,
-                    useCenter = false,
-                    topLeft = arcTopLeft,
-                    size = arcSize,
-                    style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Butt)
-                )
-            }
+        )
 
-            // Orbiting Glowing Monowire Filaments (Crimson + Neon Cyan)
-            rotate(degrees = monowireAngle, pivot = center) {
-                val monoTopLeft = Offset(center.x - monowireRadius, center.y - monowireRadius)
-                val monoSize = Size(monowireRadius * 2f, monowireRadius * 2f)
-                drawArc(
-                    color = cyber.monowireCrimson.copy(alpha = if (telemetry.isCharging) 0.85f else 0.28f),
-                    startAngle = 0f,
-                    sweepAngle = 62f,
-                    useCenter = false,
-                    topLeft = monoTopLeft,
-                    size = monoSize,
-                    style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
-                )
-                drawArc(
-                    color = cyber.neonCyan.copy(alpha = if (telemetry.isCharging) 0.72f else 0.22f),
-                    startAngle = 180f,
-                    sweepAngle = 46f,
-                    useCenter = false,
-                    topLeft = monoTopLeft,
-                    size = monoSize,
-                    style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-                )
-            }
-        }
+        // Layer 2: Static lunar disc, ticks, and charge sweep arc (cached per size/level)
+        Spacer(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithCache {
+                    val minDim = size.minDimension
+                    val center = Offset(size.width / 2f, size.height / 2f)
+                    val outerRadius = minDim * 0.47f
+                    val arcRadius = minDim * 0.40f
+                    val moonRadius = minDim * 0.24f
+
+                    val lunarBrush = Brush.radialGradient(
+                        colors = listOf(
+                            cyber.lucyPearl.copy(alpha = 0.11f),
+                            cyber.lucyLavender.copy(alpha = 0.05f),
+                            Color.Transparent
+                        ),
+                        center = Offset(center.x - moonRadius * 0.2f, center.y - moonRadius * 0.25f),
+                        radius = moonRadius * 1.15f
+                    )
+                    val moonStroke = Stroke(width = 1.dp.toPx())
+                    val trackStroke = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Butt)
+                    val arcTopLeft = Offset(center.x - arcRadius, center.y - arcRadius)
+                    val arcSize = Size(arcRadius * 2f, arcRadius * 2f)
+                    val sweepBrush = Brush.sweepGradient(colors = sweepColors, center = center)
+
+                    val totalTicks = 48
+                    val startDeg = 135.0
+                    val sweepTotal = 270.0
+                    val tickMajorWidth = 2.2.dp.toPx()
+                    val tickMinorWidth = 1.2.dp.toPx()
+                    val tickMajorLen = 9.dp.toPx()
+                    val tickMinorLen = 4.5.dp.toPx()
+
+                    data class TickGeometry(
+                        val start: Offset,
+                        val end: Offset,
+                        val strokeWidth: Float,
+                        val baseColor: Color,
+                        val thresholdPct: Float
+                    )
+
+                    val ticks = List(totalTicks + 1) { i ->
+                        val frac = i.toFloat() / totalTicks
+                        val rad = (startDeg + frac * sweepTotal) * PI / 180.0
+                        val cosR = cos(rad).toFloat()
+                        val sinR = sin(rad).toFloat()
+                        val isMajor = i % 6 == 0
+                        val tickLen = if (isMajor) tickMajorLen else tickMinorLen
+                        val litColor = when {
+                            frac > 0.75f -> cyber.lucyRose
+                            frac > 0.40f -> cyber.lucyLavender
+                            else -> cyber.neonCyan
+                        }
+                        TickGeometry(
+                            start = Offset(center.x + (outerRadius - tickLen) * cosR, center.y + (outerRadius - tickLen) * sinR),
+                            end = Offset(center.x + outerRadius * cosR, center.y + outerRadius * sinR),
+                            strokeWidth = if (isMajor) tickMajorWidth else tickMinorWidth,
+                            baseColor = litColor,
+                            thresholdPct = frac * 100f
+                        )
+                    }
+
+                    onDrawBehind {
+                        drawCircle(brush = lunarBrush, radius = moonRadius, center = center)
+                        drawCircle(
+                            color = cyber.lucyPearl.copy(alpha = 0.16f),
+                            radius = moonRadius,
+                            center = center,
+                            style = moonStroke
+                        )
+
+                        for (tick in ticks) {
+                            val isLit = tick.thresholdPct <= telemetry.levelPct
+                            drawLine(
+                                color = if (isLit) tick.baseColor.copy(alpha = 0.92f) else cyber.gridLine.copy(alpha = 0.7f),
+                                start = tick.start,
+                                end = tick.end,
+                                strokeWidth = tick.strokeWidth,
+                                cap = StrokeCap.Butt
+                            )
+                        }
+
+                        drawArc(
+                            color = cyber.gridLine.copy(alpha = 0.55f),
+                            startAngle = 135f,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            topLeft = arcTopLeft,
+                            size = arcSize,
+                            style = trackStroke
+                        )
+
+                        if (animatedLevelSweep > 0.5f) {
+                            drawArc(
+                                brush = sweepBrush,
+                                startAngle = 135f,
+                                sweepAngle = animatedLevelSweep,
+                                useCenter = false,
+                                topLeft = arcTopLeft,
+                                size = arcSize,
+                                style = trackStroke
+                            )
+                        }
+                    }
+                }
+        )
+
+        // Layer 3: GPU-rotated monowire filaments (rotationZ animated without Canvas redraw)
+        Spacer(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { rotationZ = monowireAngle }
+                .drawWithCache {
+                    val center = Offset(size.width / 2f, size.height / 2f)
+                    val monowireRadius = size.minDimension * 0.33f
+                    val monoTopLeft = Offset(center.x - monowireRadius, center.y - monowireRadius)
+                    val monoSize = Size(monowireRadius * 2f, monowireRadius * 2f)
+                    val crimsonStroke = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
+                    val cyanStroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+
+                    onDrawBehind {
+                        drawArc(
+                            color = cyber.monowireCrimson.copy(alpha = if (telemetry.isCharging) 0.85f else 0.28f),
+                            startAngle = 0f,
+                            sweepAngle = 62f,
+                            useCenter = false,
+                            topLeft = monoTopLeft,
+                            size = monoSize,
+                            style = crimsonStroke
+                        )
+                        drawArc(
+                            color = cyber.neonCyan.copy(alpha = if (telemetry.isCharging) 0.72f else 0.22f),
+                            startAngle = 180f,
+                            sweepAngle = 46f,
+                            useCenter = false,
+                            topLeft = monoTopLeft,
+                            size = monoSize,
+                            style = cyanStroke
+                        )
+                    }
+                }
+        )
 
         // Center HUD numeric readout
         Column(

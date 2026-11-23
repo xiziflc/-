@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -25,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -95,13 +97,30 @@ fun FullTelemetryCurveChart(
     val safeInspectedIdx = inspectedIndex?.coerceIn(0, (samples.size - 1).coerceAtLeast(0))
     val inspectedPoint = safeInspectedIdx?.let { samples.getOrNull(it) } ?: samples.lastOrNull()
 
-    // Compute normalized ranges for each metric
-    val maxPower = max(10f, (samples.maxOfOrNull { it.powerWatts } ?: 10f) * 1.15f)
-    val maxCurrent = max(1000f, (samples.maxOfOrNull { abs(it.currentMa) } ?: 1000f) * 1.15f)
-    val minVolt = ((samples.minOfOrNull { it.voltageV } ?: 3.5f) - 0.3f).coerceAtLeast(2.5f)
-    val maxVolt = max(minVolt + 1.0f, (samples.maxOfOrNull { it.voltageV } ?: 5.0f) + 0.3f)
-    val minTemp = ((samples.minOfOrNull { it.temperatureC } ?: 25f) - 3f).coerceAtLeast(15f)
-    val maxTemp = max(minTemp + 10f, (samples.maxOfOrNull { it.temperatureC } ?: 45f) + 3f)
+    data class CurveBounds(
+        val maxPower: Float,
+        val maxCurrent: Float,
+        val minVolt: Float,
+        val maxVolt: Float,
+        val minTemp: Float,
+        val maxTemp: Float
+    )
+
+    // Compute normalized ranges for each metric (memoized per samples list)
+    val (maxPower, maxCurrent, minVolt, maxVolt, minTemp, maxTemp) = remember(samples) {
+        val pMax = max(10f, (samples.maxOfOrNull { it.powerWatts } ?: 10f) * 1.15f)
+        val cMax = max(1000f, (samples.maxOfOrNull { abs(it.currentMa) } ?: 1000f) * 1.15f)
+        val vMin = ((samples.minOfOrNull { it.voltageV } ?: 3.5f) - 0.3f).coerceAtLeast(2.5f)
+        val vMax = max(vMin + 1.0f, (samples.maxOfOrNull { it.voltageV } ?: 5.0f) + 0.3f)
+        val tMin = ((samples.minOfOrNull { it.temperatureC } ?: 25f) - 3f).coerceAtLeast(15f)
+        val tMax = max(tMin + 10f, (samples.maxOfOrNull { it.temperatureC } ?: 45f) + 3f)
+        CurveBounds(pMax, cMax, vMin, vMax, tMin, tMax)
+    }
+
+    val gridDashEffect = remember { PathEffect.dashPathEffect(floatArrayOf(6f, 6f)) }
+    val gapDashEffect = remember { PathEffect.dashPathEffect(floatArrayOf(4f, 4f)) }
+    val curveDashEffect = remember { PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) }
+    val crosshairDashEffect = remember { PathEffect.dashPathEffect(floatArrayOf(6f, 4f)) }
 
     val minTs = samples.firstOrNull()?.timestampMs ?: 0L
     val maxTs = samples.lastOrNull()?.timestampMs ?: minTs
@@ -240,7 +259,7 @@ fun FullTelemetryCurveChart(
                 )
             }
         } else {
-            Canvas(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(chartHeight)
@@ -262,58 +281,6 @@ fun FullTelemetryCurveChart(
                     }
                     .padding(vertical = 8.dp, horizontal = 4.dp)
             ) {
-                val w = size.width
-                val h = size.height
-                val gridColor = cyber.gridLine.copy(alpha = 0.45f)
-
-                // Horizontal & vertical gridlines
-                for (r in 0..4) {
-                    val y = h * r / 4f
-                    drawLine(
-                        color = gridColor,
-                        start = Offset(0f, y),
-                        end = Offset(w, y),
-                        strokeWidth = 1f,
-                        pathEffect = if (r in 1..3) PathEffect.dashPathEffect(floatArrayOf(6f, 6f)) else null
-                    )
-                }
-                for (c in 1..3) {
-                    val x = w * c / 4f
-                    drawLine(
-                        color = gridColor.copy(alpha = 0.25f),
-                        start = Offset(x, 0f),
-                        end = Offset(x, h),
-                        strokeWidth = 1f
-                    )
-                }
-
-                val stepX = w / (samples.size - 1).coerceAtLeast(1)
-                fun xFor(idx: Int): Float = if (useRealTimeline) {
-                    ((samples[idx].timestampMs - minTs).toFloat() / totalSpanMs.toFloat()).coerceIn(0f, 1f) * w
-                } else {
-                    idx * stepX
-                }
-
-                // Highlight sampling gaps (>45s) on real timeline
-                for (i in 1 until samples.size) {
-                    if (samples[i].timestampMs - samples[i - 1].timestampMs > gapThresholdMs) {
-                        val gx1 = xFor(i - 1)
-                        val gx2 = xFor(i)
-                        drawRect(
-                            color = cyber.lucyRose.copy(alpha = 0.08f),
-                            topLeft = Offset(gx1, 0f),
-                            size = androidx.compose.ui.geometry.Size((gx2 - gx1).coerceAtLeast(2f), h)
-                        )
-                        drawLine(
-                            color = cyber.lucyRose.copy(alpha = 0.45f),
-                            start = Offset(gx1, 0f),
-                            end = Offset(gx1, h),
-                            strokeWidth = 1f,
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
-                        )
-                    }
-                }
-
                 fun normFor(channel: CurveChannel, pt: CurveDataPoint): Float = when (channel) {
                     CurveChannel.POWER -> (pt.powerWatts / maxPower).coerceIn(0f, 1f)
                     CurveChannel.CURRENT -> (abs(pt.currentMa) / maxCurrent).coerceIn(0f, 1f)
@@ -322,133 +289,207 @@ fun FullTelemetryCurveChart(
                     CurveChannel.SOC -> (pt.levelPct / 100f).coerceIn(0f, 1f)
                 }
 
-                fun drawChannelCurve(channel: CurveChannel, fillArea: Boolean, dashed: Boolean) {
-                    val color = channelColor(channel)
-                    val linePath = Path()
-                    val fillPath = Path()
-                    var segmentStartX = 0f
-                    var hasOpenSegment = false
+                // Cached curves & gridlines (rebuilt only when size, samples, or activeChannels change)
+                Spacer(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawWithCache {
+                            val w = size.width
+                            val h = size.height
+                            val gridColor = cyber.gridLine.copy(alpha = 0.45f)
+                            val stepX = w / (samples.size - 1).coerceAtLeast(1)
 
-                    samples.forEachIndexed { idx, pt ->
-                        val x = xFor(idx)
-                        val y = h - normFor(channel, pt) * h
-                        val isGapAfterPrev = idx > 0 &&
-                            (samples[idx].timestampMs - samples[idx - 1].timestampMs > gapThresholdMs)
-
-                        if (idx == 0 || isGapAfterPrev) {
-                            if (fillArea && hasOpenSegment) {
-                                fillPath.lineTo(xFor(idx - 1), h)
-                                fillPath.close()
+                            fun xFor(idx: Int): Float = if (useRealTimeline) {
+                                ((samples[idx].timestampMs - minTs).toFloat() / totalSpanMs.toFloat()).coerceIn(0f, 1f) * w
+                            } else {
+                                idx * stepX
                             }
-                            linePath.moveTo(x, y)
-                            if (fillArea) {
-                                fillPath.moveTo(x, h)
-                                fillPath.lineTo(x, y)
-                            }
-                            segmentStartX = x
-                            hasOpenSegment = true
-                        } else {
-                            linePath.lineTo(x, y)
-                            if (fillArea) fillPath.lineTo(x, y)
-                        }
-                        if (fillArea && idx == samples.lastIndex && hasOpenSegment) {
-                            fillPath.lineTo(x, h)
-                            fillPath.close()
-                        }
-                    }
 
-                    if (fillArea) {
-                        drawPath(
-                            path = fillPath,
-                            brush = Brush.verticalGradient(
-                                colors = listOf(color.copy(alpha = 0.26f), color.copy(alpha = 0.01f)),
-                                startY = 0f,
-                                endY = h
+                            data class CachedCurve(
+                                val linePath: Path,
+                                val fillPath: Path?,
+                                val fillBrush: Brush?,
+                                val color: Color,
+                                val stroke: Stroke
                             )
+
+                            fun buildCurve(channel: CurveChannel, fillArea: Boolean, dashed: Boolean): CachedCurve {
+                                val color = channelColor(channel)
+                                val linePath = Path()
+                                val fillPath = if (fillArea) Path() else null
+                                var hasOpenSegment = false
+
+                                samples.forEachIndexed { idx, pt ->
+                                    val x = xFor(idx)
+                                    val y = h - normFor(channel, pt) * h
+                                    val isGapAfterPrev = idx > 0 &&
+                                        (samples[idx].timestampMs - samples[idx - 1].timestampMs > gapThresholdMs)
+
+                                    if (idx == 0 || isGapAfterPrev) {
+                                        if (fillPath != null && hasOpenSegment) {
+                                            fillPath.lineTo(xFor(idx - 1), h)
+                                            fillPath.close()
+                                        }
+                                        linePath.moveTo(x, y)
+                                        if (fillPath != null) {
+                                            fillPath.moveTo(x, h)
+                                            fillPath.lineTo(x, y)
+                                        }
+                                        hasOpenSegment = true
+                                    } else {
+                                        linePath.lineTo(x, y)
+                                        fillPath?.lineTo(x, y)
+                                    }
+                                    if (fillPath != null && idx == samples.lastIndex && hasOpenSegment) {
+                                        fillPath.lineTo(x, h)
+                                        fillPath.close()
+                                    }
+                                }
+
+                                val fillBrush = if (fillPath != null) {
+                                    Brush.verticalGradient(
+                                        colors = listOf(color.copy(alpha = 0.26f), color.copy(alpha = 0.01f)),
+                                        startY = 0f,
+                                        endY = h
+                                    )
+                                } else null
+
+                                val stroke = Stroke(
+                                    width = if (channel == CurveChannel.POWER) 2.5.dp.toPx() else 1.8.dp.toPx(),
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round,
+                                    pathEffect = if (dashed) curveDashEffect else null
+                                )
+                                return CachedCurve(linePath, fillPath, fillBrush, color, stroke)
+                            }
+
+                            val cachedCurves = buildList {
+                                if (CurveChannel.SOC in activeChannels) add(buildCurve(CurveChannel.SOC, fillArea = false, dashed = false))
+                                if (CurveChannel.VOLTAGE in activeChannels) add(buildCurve(CurveChannel.VOLTAGE, fillArea = false, dashed = true))
+                                if (CurveChannel.CURRENT in activeChannels) add(buildCurve(CurveChannel.CURRENT, fillArea = false, dashed = false))
+                                if (CurveChannel.TEMP in activeChannels) add(buildCurve(CurveChannel.TEMP, fillArea = false, dashed = true))
+                                if (CurveChannel.POWER in activeChannels) add(buildCurve(CurveChannel.POWER, fillArea = true, dashed = false))
+                            }
+
+                            onDrawBehind {
+                                for (r in 0..4) {
+                                    val y = h * r / 4f
+                                    drawLine(
+                                        color = gridColor,
+                                        start = Offset(0f, y),
+                                        end = Offset(w, y),
+                                        strokeWidth = 1f,
+                                        pathEffect = if (r in 1..3) gridDashEffect else null
+                                    )
+                                }
+                                for (c in 1..3) {
+                                    val x = w * c / 4f
+                                    drawLine(
+                                        color = gridColor.copy(alpha = 0.25f),
+                                        start = Offset(x, 0f),
+                                        end = Offset(x, h),
+                                        strokeWidth = 1f
+                                    )
+                                }
+                                for (i in 1 until samples.size) {
+                                    if (samples[i].timestampMs - samples[i - 1].timestampMs > gapThresholdMs) {
+                                        val gx1 = xFor(i - 1)
+                                        val gx2 = xFor(i)
+                                        drawRect(
+                                            color = cyber.lucyRose.copy(alpha = 0.08f),
+                                            topLeft = Offset(gx1, 0f),
+                                            size = androidx.compose.ui.geometry.Size((gx2 - gx1).coerceAtLeast(2f), h)
+                                        )
+                                        drawLine(
+                                            color = cyber.lucyRose.copy(alpha = 0.45f),
+                                            start = Offset(gx1, 0f),
+                                            end = Offset(gx1, h),
+                                            strokeWidth = 1f,
+                                            pathEffect = gapDashEffect
+                                        )
+                                    }
+                                }
+                                for (curve in cachedCurves) {
+                                    if (curve.fillPath != null && curve.fillBrush != null) {
+                                        drawPath(path = curve.fillPath, brush = curve.fillBrush)
+                                    }
+                                    drawPath(path = curve.linePath, color = curve.color, style = curve.stroke)
+                                }
+                            }
+                        }
+                )
+
+                // Lightweight overlay Canvas for crosshair & highlight dots only
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    val stepX = w / (samples.size - 1).coerceAtLeast(1)
+                    val highlightIdx = safeInspectedIdx ?: samples.lastIndex
+                    val hx = if (useRealTimeline) {
+                        ((samples[highlightIdx].timestampMs - minTs).toFloat() / totalSpanMs.toFloat()).coerceIn(0f, 1f) * w
+                    } else {
+                        highlightIdx * stepX
+                    }
+                    if (safeInspectedIdx != null) {
+                        drawLine(
+                            color = cyber.lucyPearl.copy(alpha = 0.78f),
+                            start = Offset(hx, 0f),
+                            end = Offset(hx, h),
+                            strokeWidth = 1.4.dp.toPx(),
+                            pathEffect = crosshairDashEffect
                         )
                     }
-
-                    drawPath(
-                        path = linePath,
-                        color = color,
-                        style = Stroke(
-                            width = if (channel == CurveChannel.POWER) 2.5.dp.toPx() else 1.8.dp.toPx(),
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round,
-                            pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null
+                    val pt = samples[highlightIdx]
+                    activeChannels.forEach { ch ->
+                        val y = h - normFor(ch, pt) * h
+                        drawCircle(
+                            color = channelColor(ch),
+                            radius = 4.dp.toPx(),
+                            center = Offset(hx, y)
                         )
-                    )
-                }
-
-                // Draw enabled layers in crisp visual z-order
-                if (CurveChannel.SOC in activeChannels) {
-                    drawChannelCurve(CurveChannel.SOC, fillArea = false, dashed = false)
-                }
-                if (CurveChannel.VOLTAGE in activeChannels) {
-                    drawChannelCurve(CurveChannel.VOLTAGE, fillArea = false, dashed = true)
-                }
-                if (CurveChannel.CURRENT in activeChannels) {
-                    drawChannelCurve(CurveChannel.CURRENT, fillArea = false, dashed = false)
-                }
-                if (CurveChannel.TEMP in activeChannels) {
-                    drawChannelCurve(CurveChannel.TEMP, fillArea = false, dashed = true)
-                }
-                if (CurveChannel.POWER in activeChannels) {
-                    drawChannelCurve(CurveChannel.POWER, fillArea = true, dashed = false)
-                }
-
-                // Lucy Monowire Crosshair & Active Highlight Dots
-                val highlightIdx = safeInspectedIdx ?: samples.lastIndex
-                val hx = xFor(highlightIdx)
-                if (safeInspectedIdx != null) {
-                    drawLine(
-                        color = cyber.lucyPearl.copy(alpha = 0.78f),
-                        start = Offset(hx, 0f),
-                        end = Offset(hx, h),
-                        strokeWidth = 1.4.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
-                    )
-                }
-
-                val pt = samples[highlightIdx]
-                activeChannels.forEach { ch ->
-                    val y = h - normFor(ch, pt) * h
-                    drawCircle(
-                        color = channelColor(ch),
-                        radius = 4.dp.toPx(),
-                        center = Offset(hx, y)
-                    )
+                    }
                 }
             }
 
+            data class CurveSummary(
+                val firstTime: String,
+                val lastTime: String,
+                val peakW: Float,
+                val avgW: Float,
+                val peakT: Float
+            )
+
             // X-axis Timeline & Peak/Avg Footer
-            val firstTime = timeFormat.format(Date(samples.first().timestampMs))
-            val lastTime = timeFormat.format(Date(samples.last().timestampMs))
-            val peakW = samples.maxOf { it.powerWatts }
-            val avgW = samples.map { it.powerWatts }.average().toFloat()
-            val peakT = samples.maxOf { it.temperatureC }
+            val (firstTimeStr, lastTimeStr, peakWFloat, avgWFloat, peakTFloat) = remember(samples) {
+                val ft = timeFormat.format(Date(samples.first().timestampMs))
+                val lt = timeFormat.format(Date(samples.last().timestampMs))
+                val pw = samples.maxOf { it.powerWatts }
+                val aw = samples.map { it.powerWatts }.average().toFloat()
+                val pt = samples.maxOf { it.temperatureC }
+                CurveSummary(ft, lt, pw, aw, pt)
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = firstTime,
+                    text = firstTimeStr,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
                     text = if (gapCount > 0) {
-                        "峰值 ${String.format(Locale.US, "%.1fW", peakW)} / 均值 ${String.format(Locale.US, "%.1fW", avgW)} / 断采 ${gapCount}处"
+                        "峰值 ${String.format(Locale.US, "%.1fW", peakWFloat)} / 均值 ${String.format(Locale.US, "%.1fW", avgWFloat)} / 断采 ${gapCount}处"
                     } else {
-                        "可滑动曲线查点 · 峰值 ${String.format(Locale.US, "%.1fW", peakW)} / 均值 ${String.format(Locale.US, "%.1fW", avgW)} / 最高 ${String.format(Locale.US, "%.1f°C", peakT)}"
+                        "可滑动曲线查点 · 峰值 ${String.format(Locale.US, "%.1fW", peakWFloat)} / 均值 ${String.format(Locale.US, "%.1fW", avgWFloat)} / 最高 ${String.format(Locale.US, "%.1f°C", peakTFloat)}"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = if (gapCount > 0) cyber.lucyRose else cyber.lucyLavender,
                     maxLines = 1
                 )
                 Text(
-                    text = lastTime,
+                    text = lastTimeStr,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

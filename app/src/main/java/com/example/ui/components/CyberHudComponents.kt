@@ -26,15 +26,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -54,44 +57,46 @@ fun CyberGridBackdrop(
     val cyber = LocalCyberColors.current
 
     Box(
-        modifier = modifier.drawBehind {
-            drawRect(color = bg)
-
-            // Lucy Iridescent Ambient Glows (Cyan + Lavender + Rose Monowire)
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(cyber.neonCyan.copy(alpha = 0.08f), Color.Transparent),
-                    center = Offset(size.width * 0.85f, size.height * 0.08f),
-                    radius = size.width * 0.85f
-                )
+        modifier = modifier.drawWithCache {
+            val cyanGlow = Brush.radialGradient(
+                colors = listOf(cyber.neonCyan.copy(alpha = 0.08f), Color.Transparent),
+                center = Offset(size.width * 0.85f, size.height * 0.08f),
+                radius = size.width * 0.85f
             )
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(cyber.lucyLavender.copy(alpha = 0.07f), Color.Transparent),
-                    center = Offset(size.width * 0.15f, size.height * 0.45f),
-                    radius = size.width * 0.72f
-                )
+            val lavenderGlow = Brush.radialGradient(
+                colors = listOf(cyber.lucyLavender.copy(alpha = 0.07f), Color.Transparent),
+                center = Offset(size.width * 0.15f, size.height * 0.45f),
+                radius = size.width * 0.72f
             )
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(cyber.monowireCrimson.copy(alpha = 0.06f), Color.Transparent),
-                    center = Offset(size.width * 0.18f, size.height * 0.90f),
-                    radius = size.width * 0.75f
-                )
+            val crimsonGlow = Brush.radialGradient(
+                colors = listOf(cyber.monowireCrimson.copy(alpha = 0.06f), Color.Transparent),
+                center = Offset(size.width * 0.18f, size.height * 0.90f),
+                radius = size.width * 0.75f
             )
-
-            // Netrunner ICE precision grid
             val step = 36.dp.toPx()
             val gridColor = cyber.gridLine.copy(alpha = 0.25f)
-            var x = 0f
-            while (x < size.width) {
-                drawLine(gridColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
-                x += step
+            val gridStroke = Stroke(width = 1f)
+            val gridPath = Path().apply {
+                var x = 0f
+                while (x < size.width) {
+                    moveTo(x, 0f)
+                    lineTo(x, size.height)
+                    x += step
+                }
+                var y = 0f
+                while (y < size.height) {
+                    moveTo(0f, y)
+                    lineTo(size.width, y)
+                    y += step
+                }
             }
-            var y = 0f
-            while (y < size.height) {
-                drawLine(gridColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
-                y += step
+
+            onDrawBehind {
+                drawRect(color = bg)
+                drawRect(brush = cyanGlow)
+                drawRect(brush = lavenderGlow)
+                drawRect(brush = crimsonGlow)
+                drawPath(path = gridPath, color = gridColor, style = gridStroke)
             }
         },
         content = content
@@ -108,7 +113,8 @@ fun LucyMoonHeroBanner(
     modifier: Modifier = Modifier
 ) {
     val cyber = LocalCyberColors.current
-    val shape = CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp)
+    val bgColor = MaterialTheme.colorScheme.background
+    val shape = remember { CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp) }
 
     Box(
         modifier = modifier
@@ -128,28 +134,26 @@ fun LucyMoonHeroBanner(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Left-to-right & bottom gradient scrim for ultra-clean HUD typography
-        Box(
+        // Combined left-to-right & bottom gradient scrim cached per size
+        Spacer(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        0.0f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
-                        0.52f to MaterialTheme.colorScheme.background.copy(alpha = 0.68f),
+                .drawWithCache {
+                    val hScrim = Brush.horizontalGradient(
+                        0.0f to bgColor.copy(alpha = 0.92f),
+                        0.52f to bgColor.copy(alpha = 0.68f),
                         1.0f to Color.Transparent
                     )
-                )
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
+                    val vScrim = Brush.verticalGradient(
                         0.0f to Color.Transparent,
                         0.68f to Color.Transparent,
-                        1.0f to MaterialTheme.colorScheme.background.copy(alpha = 0.88f)
+                        1.0f to bgColor.copy(alpha = 0.88f)
                     )
-                )
+                    onDrawBehind {
+                        drawRect(brush = hScrim)
+                        drawRect(brush = vScrim)
+                    }
+                }
         )
 
         // Top monowire laser accent bar
@@ -243,26 +247,32 @@ fun CyberPanel(
     onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
-    val shape: Shape = CutCornerShape(topStart = cutSize, bottomEnd = cutSize)
-    val baseModifier = modifier
-        .clip(shape)
-        .background(
-            brush = Brush.linearGradient(
-                colors = listOf(
-                    containerColor,
-                    MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
-                )
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    val outlineColor = MaterialTheme.colorScheme.outline
+    val shape: Shape = remember(cutSize) { CutCornerShape(topStart = cutSize, bottomEnd = cutSize) }
+    val bgBrush = remember(containerColor, surfaceColor) {
+        Brush.linearGradient(
+            colors = listOf(
+                containerColor,
+                surfaceColor.copy(alpha = 0.96f)
             )
         )
+    }
+    val borderBrush = remember(accentColor, outlineColor) {
+        Brush.linearGradient(
+            colors = listOf(
+                accentColor.copy(alpha = 0.65f),
+                outlineColor.copy(alpha = 0.45f),
+                accentColor.copy(alpha = 0.4f)
+            )
+        )
+    }
+    val baseModifier = modifier
+        .clip(shape)
+        .background(brush = bgBrush)
         .border(
             width = 1.dp,
-            brush = Brush.linearGradient(
-                colors = listOf(
-                    accentColor.copy(alpha = 0.65f),
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
-                    accentColor.copy(alpha = 0.4f)
-                )
-            ),
+            brush = borderBrush,
             shape = shape
         )
         .drawWithContent {
